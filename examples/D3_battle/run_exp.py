@@ -23,7 +23,7 @@ def main(main_args):
 	simulator_args['config'] = '../../maps/D3_battle.cfg'
 	simulator_args['resolution'] = (84,84)
 	simulator_args['frame_skip'] = 4
-	simulator_args['color_mode'] = 'GRAY'	
+	simulator_args['color_mode'] = 'GRAY'
 	simulator_args['use_shaping_reward'] = False
 	simulator_args['maps'] = ['MAP01']
 	simulator_args['switch_maps'] = False

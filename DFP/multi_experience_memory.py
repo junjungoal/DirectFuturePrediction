@@ -9,7 +9,10 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import time
 import os
+import h5py
+from itertools import accumulate
 from . import util as my_util
+import pickle
 
 class MultiExperienceMemory:
 
@@ -44,6 +47,7 @@ class MultiExperienceMemory:
         self._images = my_util.make_array(shape=(self.capacity,) + self.img_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
         self._measurements =  my_util.make_array(shape=(self.capacity,) + self.meas_shape, dtype=np.float32, shared=self.shared, fill_val=0.)
         self._rewards =  my_util.make_array(shape=(self.capacity,), dtype=np.float32, shared=self.shared, fill_val=0.)
+        # self._segmentations = my_util.make_array(shape=(self.capacity,) + self.img_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
         self._terminals =  my_util.make_array(shape=(self.capacity,), dtype=np.bool, shared=self.shared, fill_val=1)
         self._actions = my_util.make_array(shape=(self.capacity,) + self.action_shape, dtype=np.int, shared=self.shared, fill_val=0)
         self._objectives = my_util.make_array(shape=(self.capacity,) + self.obj_shape, dtype=np.float32, shared=self.shared, fill_val=0.)
@@ -54,7 +58,7 @@ class MultiExperienceMemory:
         self._episode_counts = np.zeros(self.num_heads)
 
 
-    def add(self, imgs, meass, rwrds, terms, acts, objs=None, preds=None):
+    def add(self, imgs, meass, rwrds, terms, obj_labels, acts, objs=None, preds=None):
         ''' Add experience to dataset.
 
         Args:
@@ -70,6 +74,7 @@ class MultiExperienceMemory:
         self._rewards[self._curr_indices] = rwrds
         self._terminals[self._curr_indices] = terms
         self._actions[self._curr_indices] = np.array(acts)
+        # self._obj_labels[self._curr_indices] = obj_labels
         if isinstance(objs, np.ndarray):
             self._objectives[self._curr_indices] = objs
         if isinstance(preds, np.ndarray):
@@ -234,6 +239,43 @@ class MultiExperienceMemory:
         
         return state_imgs, state_meas, rwrds, terms, acts, targs, objs
 
+    def dump(self, coeffs, scale_coeffs, discount_factor=0.99):
+        state_imgs, state_meas, rwrds, terms, _, _, _ = self.get_observations(np.arange(self._curr_indices[-1]))
+        keys = ['obs', 'meas', 'rwrds', 'terms']
+
+        episode_obs = []
+        episode_meas = []
+        episode_rwrds = []
+        episode = 0
+        coeffs = [0. if c < 1e-5 and c > -1e-5 else c for c in coeffs]
+        dir_name = '/data/jun/projects/reward_induced_mtl_rep/datasets/vizdoom/{}/'.format('-'.join(map(str, coeffs)))
+        os.makedirs(dir_name, exist_ok=True)
+        episode = len(os.listdir(dir_name))
+        prev_meas = state_meas[0] / scale_coeffs
+        for i, term in enumerate(terms):
+            if term:
+                reversed_rewards = episode_rwrds[::-1]
+                values = np.array(list(accumulate(reversed_rewards, lambda x,y: x*discount_factor + y))[::-1])
+                with open(os.path.join(dir_name, 'episode_{}.pkl'.format(episode)), 'wb') as f:
+                    pickle.dump({'obs': episode_obs, 'meas': episode_meas,
+                                 'rwrds': episode_rwrds, 'values': values}, f)
+                episode += 1
+                episode_obs = []
+                episode_meas = []
+                episode_rwrds = []
+                if len(terms) != i+1:
+                    prev_meas = state_meas[i+1] * coeffs / scale_coeffs
+            else:
+                episode_obs.append(state_imgs[i])
+                episode_meas.append(state_meas[i])
+                normalized_meas = state_meas[i] / scale_coeffs
+                reward = np.sum(coeffs * (normalized_meas - prev_meas))
+                episode_rwrds.append(reward)
+                prev_meas = normalized_meas
+
+
+
+
     def get_random_batch(self, batch_size):
         ''' Sample minibatch of experiences for training '''
 
@@ -280,8 +322,7 @@ class MultiExperienceMemory:
             total_avg_rwrd = total_sum_rwrd / num_episodes
         
         return total_avg_meas, total_avg_rwrd
-            
-            
+
     def show(self, start_index=0, end_index=None, display=True, write_imgs=False, write_video = False, preprocess_targets=None, show_predictions=0, net_discrete_actions = []):
         if show_predictions:
             assert(hasattr(self,'_predictions'))

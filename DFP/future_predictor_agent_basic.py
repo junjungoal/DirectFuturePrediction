@@ -70,7 +70,7 @@ class FuturePredictorAgentBasic(Agent):
             curr_objective_coeffs = np.tile(objective_coeffs[None,:],(state_imgs.shape[0],1))
         else:
             curr_objective_coeffs = objective_coeffs
-        
+        print("Curr Objective: ", objective_coeffs)
         predictions = self.sess.run(self.pred_all, feed_dict={self.input_images: state_imgs, 
                                                               self.input_measurements: state_meas,
                                                               self.input_objective_coeffs: curr_objective_coeffs})

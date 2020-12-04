@@ -31,6 +31,7 @@ class DoomSimulator:
         self._game.set_vizdoom_path(os.path.join(vizdoom_path,'bin/vizdoom'))
         self._game.set_doom_game_path(os.path.join(vizdoom_path,'bin/freedoom2.wad'))
         self._game.load_config(self.config)
+        self._game.set_labels_buffer_enabled(True)
         self._game.add_game_args(self.game_args)
         self.curr_map = 0
         self._game.set_doom_map(self.maps[self.curr_map])
@@ -67,6 +68,16 @@ class DoomSimulator:
             
         self.episode_count = 0
         self.game_initialized = False
+
+    def color_labels(labels):
+        """
+        Walls are blue, floor/ceiling are red (OpenCV uses BGR).
+        """
+        tmp = np.stack([labels] * 3, -1)
+        tmp[labels == 0] = [255, 0, 0]
+        tmp[labels == 1] = [0, 0, 255]
+
+        return tmp
         
     def analyze_controls(self, config_file):
         with open(config_file, 'r') as myfile:
@@ -103,11 +114,17 @@ class DoomSimulator:
         
         rwrd = self._game.make_action(action, self.frame_skip)        
         state = self._game.get_state()
-        
+        self.state = state
+        obj_labels = []
         if state is None:
             img = None
             meas = None
+            seg = None
         else:        
+            labels = state.labels
+            for l in labels:
+                obj_labels.append({'label': l.value, 'object_id': l.object_id, 'object_name': l.object_name})
+            print(obj_labels)
             # ViZDoom 1.0
             #raw_img = state.image_buffer
                 
@@ -119,7 +136,7 @@ class DoomSimulator:
                 
             if self.resize:
                 if self.num_channels == 1:
-                    if raw_img is None or (isinstance(raw_img, list) and raw_img[0] is None):
+                    if raw_img is None:
                         img = None
                     else:
                         img = cv2.resize(raw_img[0], (self.resolution[0], self.resolution[1]))[None,:,:]
@@ -137,7 +154,7 @@ class DoomSimulator:
             img = np.zeros((self.num_channels, self.resolution[1], self.resolution[0]), dtype=np.uint8) # should ideally put nan here, but since it's an int...
             meas = np.zeros(self.num_meas, dtype=np.uint32) # should ideally put nan here, but since it's an int...
             
-        return img, meas, rwrd, term
+        return img, meas, rwrd, term, obj_labels
     
     def get_random_action(self):
         return [(random.random() >= .5) for i in range(self.num_buttons)]
@@ -154,3 +171,4 @@ class DoomSimulator:
         self.next_map()
         self.episode_count += 1
         self._game.new_episode()
+        self.state = self._game.state

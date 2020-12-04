@@ -107,18 +107,23 @@ class MultiExperiment:
         self.test_random_prob = experiment_args['test_random_prob']
         self.test_checkpoint = experiment_args['test_checkpoint']
         self.test_policy_num_steps = experiment_args['test_policy_num_steps']
+        self.test_objective_coeffs_meas = experiment_args['test_objective_coeffs_meas']
+        self.scale_coeffs = experiment_args['scale_coeffs']
     
     def run(self, mode):
         shutil.copy('run_exp.py', 'run_exp.py.' + mode)
-        if mode == 'show':  
+        if mode == 'show' or mode == 'save':  
             if not self.ag.load(self.test_checkpoint):
                 print('Could not load the checkpoint ', self.test_checkpoint)
                 return
             self.train_experience.head_offset = self.test_policy_num_steps + 1
             self.train_experience.log_prefix = 'logs/log_test'
             self.ag.test_policy(self.multi_simulator, self.train_experience, self.test_objective_coeffs, self.test_policy_num_steps, random_prob = self.test_random_prob, write_summary=False, write_predictions=True)
-            self.train_experience.show(start_index=0, end_index=self.test_policy_num_steps * self.multi_simulator.num_simulators, display=True, write_imgs=False, 
-                                       preprocess_targets = self.ag.preprocess_input_targets, show_predictions=self.num_predictions_to_show, net_discrete_actions = self.ag.net_discrete_actions)
+            if mode == 'show':
+                self.train_experience.show(start_index=0, end_index=self.test_policy_num_steps * self.multi_simulator.num_simulators, display=True, write_imgs=False, 
+                                           preprocess_targets = self.ag.preprocess_input_targets, show_predictions=self.num_predictions_to_show, net_discrete_actions = self.ag.net_discrete_actions)
+            else:
+                self.train_experience.dump(self.test_objective_coeffs_meas, self.scale_coeffs)
         elif mode == 'train':
             self.test_policy_experience.log_prefix = 'logs/log'
             self.ag.train(self.multi_simulator, self.train_experience, self.num_train_iterations, test_policy_experience=self.test_policy_experience)
