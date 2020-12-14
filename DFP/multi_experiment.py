@@ -108,7 +108,10 @@ class MultiExperiment:
         self.test_checkpoint = experiment_args['test_checkpoint']
         self.test_policy_num_steps = experiment_args['test_policy_num_steps']
         self.test_objective_coeffs_meas = experiment_args['test_objective_coeffs_meas']
-        self.scale_coeffs = experiment_args['scale_coeffs']
+        if 'scale_coeffs' in experiment_args:
+            self.scale_coeffs = experiment_args['scale_coeffs']
+        else:
+            self.scale_coeffs = None
     
     def run(self, mode):
         shutil.copy('run_exp.py', 'run_exp.py.' + mode)

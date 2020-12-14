@@ -114,8 +114,10 @@ class DoomSimulator:
         
         rwrd = self._game.make_action(action, self.frame_skip)        
         state = self._game.get_state()
-        self.state = state
-        obj_labels = []
+        if 'navigation' in self.config:
+            obj_labels = np.zeros(2)
+        else:
+            obj_labels = np.zeros(3)
         if state is None:
             img = None
             meas = None
@@ -123,8 +125,19 @@ class DoomSimulator:
         else:        
             labels = state.labels
             for l in labels:
-                obj_labels.append({'label': l.value, 'object_id': l.object_id, 'object_name': l.object_name})
-            print(obj_labels)
+                if 'navigation' in self.config:
+                    if l.object_name == 'CustomMedikit':
+                        obj_labels[0] = 1.0
+                    if l.object_name == 'Poison':
+                        obj_labels[1] = 1.0
+                else:
+                    if l.object_name == 'Clip':
+                        obj_labels[0] = 1.0
+                    if l.object_name == 'CustomMedikit':
+                        obj_labels[1] = 1.0
+                    if l.object_name == "DoomImp":
+                        obj_labels[2] = 1.0
+
             # ViZDoom 1.0
             #raw_img = state.image_buffer
                 
@@ -146,6 +159,8 @@ class DoomSimulator:
                 img = raw_img
                 
             meas = state.game_variables # this is a numpy array of game variables specified by the scenario
+            mask = state.labels_buffer
+            mask = cv2.resize(mask, (self.resolution[0], self.resolution[1]))[None, :, :]
             
         term = self._game.is_episode_finished() or self._game.is_player_dead()
         
@@ -153,8 +168,9 @@ class DoomSimulator:
             self.new_episode() # in multiplayer multi_simulator takes care of this            
             img = np.zeros((self.num_channels, self.resolution[1], self.resolution[0]), dtype=np.uint8) # should ideally put nan here, but since it's an int...
             meas = np.zeros(self.num_meas, dtype=np.uint32) # should ideally put nan here, but since it's an int...
+            mask = np.zeros((1, self.resolution[1], self.resolution[0]), dtype=np.uint8)
             
-        return img, meas, rwrd, term, obj_labels
+        return img, meas, rwrd, term, obj_labels, mask
     
     def get_random_action(self):
         return [(random.random() >= .5) for i in range(self.num_buttons)]
@@ -171,4 +187,3 @@ class DoomSimulator:
         self.next_map()
         self.episode_count += 1
         self._game.new_episode()
-        self.state = self._game.state
