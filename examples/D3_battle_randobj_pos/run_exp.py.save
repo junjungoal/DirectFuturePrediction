@@ -61,7 +61,7 @@ def main(main_args):
             
     # agent properties
     agent_args['objective_coeffs_temporal'] = [0., 0. ,0. ,0.5, 0.5, 1.]
-    agent_args['objective_coeffs_meas'] = [0.5, 0.5, 1.0]
+    agent_args['objective_coeffs_meas'] = [1e-5, 1e-5, 1.0]
     agent_args['random_exploration_schedule'] = lambda step: (0.02 + 145000. / (float(step) + 150000.))
     agent_args['new_memories_per_batch'] = 8
     agent_args['random_objective_coeffs'] = True
@@ -108,7 +108,7 @@ def main(main_args):
     experiment_args = {}
     experiment_args['num_train_iterations'] = 820000
     experiment_args['test_objective_coeffs_temporal'] = np.array([0., 0., 0., 0.5, 0.5, 1.])
-    experiment_args['test_objective_coeffs_meas'] = np.array([0.5, 0.5, 1.0])
+    experiment_args['test_objective_coeffs_meas'] = np.array([1e-5, 1e-5, 1.0])
     experiment_args['test_random_prob'] = 0.
     experiment_args['test_checkpoint'] = 'checkpoints/2017_04_09_09_10_58'
     experiment_args['test_policy_num_steps'] = 12000
