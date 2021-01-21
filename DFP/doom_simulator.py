@@ -16,9 +16,36 @@ import numpy as np
 import re
 import cv2
 
+def get_random_color():
+    return np.random.randint(0, 255, 3, dtype=np.int32)
+
+
+
+name_to_color_map = dict({0: [0, 0, 0]})
+id_to_color_map = dict({0: [128, 128, 128]})
+
+ammo_color = [0, 0, 255]
+medikit_color = [0, 255, 0]
+armor_color = [0, 128, 0]
+monstor_color = [128, 128, 128]
+poison_color = [128, 0, 0]
+misc_color = [0, 0, 128]
+
+random_monster_color = lambda: [randint(100, 255), 0, randint(0, 40)]
+
+name_to_color_map['CustomMedikit'] = medikit_color
+name_to_color_map['DoomImp'] = monstor_color
+name_to_color_map['Clip'] = ammo_color
+name_to_color_map['Poison'] = poison_color
+
+wall_color = [128, 40, 40]
+floor_color = [40, 40, 128]
+wall_id = 0
+floor_id = 1
+
 class DoomSimulator:
     
-    def __init__(self, args):        
+    def __init__(self, args):
         self.config = args['config']
         self.resolution = args['resolution']
         self.frame_skip = args['frame_skip']
@@ -35,6 +62,13 @@ class DoomSimulator:
         self._game.add_game_args(self.game_args)
         self.curr_map = 0
         self._game.set_doom_map(self.maps[self.curr_map])
+
+        if 'navigation' in self.config:
+            self.object_names = ['CustomMedikit', 'Poison']
+        else:
+            self.object_names = ['Clip', 'CustomMedikit', "DoomImp"]
+
+
         
         # set resolution
         try:
@@ -97,6 +131,28 @@ class DoomSimulator:
         if self.game_initialized:
             self._game.close()
             self.game_initialized = False
+
+    def transform_labels(self, labels,
+                     buffer):
+        rgb_buffer = np.stack([buffer] * 3, axis=2)
+        mask = np.zeros((rgb_buffer.shape[0], rgb_buffer.shape[1], len(self.object_names)+3))
+
+        # Walls and floor
+        rgb_buffer[buffer == wall_id] = wall_color
+        rgb_buffer[buffer == floor_id] = floor_color
+        mask[buffer==wall_id, 0] = 1.
+        mask[buffer==floor_id, 1] = 1.
+
+        for l in labels:
+            name = l.object_name
+            if name not in self.object_names:
+                mask[buffer == l.value, 2] = 1.
+                rgb_buffer[buffer == l.value, :] = misc_color
+            else:
+                color = name_to_color_map[name]
+                rgb_buffer[buffer == l.value, :] = color
+                mask[buffer == l.value, 3+self.object_names.index(name)] = 1.
+        return rgb_buffer, mask
             
     def step(self, action=0):
         """
@@ -122,7 +178,7 @@ class DoomSimulator:
             img = None
             meas = None
             seg = None
-        else:        
+        else:
             labels = state.labels
             for l in labels:
                 if 'navigation' in self.config:
@@ -159,8 +215,16 @@ class DoomSimulator:
                 img = raw_img
                 
             meas = state.game_variables # this is a numpy array of game variables specified by the scenario
-            mask = state.labels_buffer
-            mask = cv2.resize(mask, (self.resolution[0], self.resolution[1]))[None, :, :]
+            buffer = state.labels_buffer
+            mask, seg_target = self.transform_labels(labels, buffer)
+            mask = cv2.resize(mask, (self.resolution[0], self.resolution[1]))
+            gray_mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)[None, :, :]
+            mask = mask.transpose((2, 0, 1))
+            seg_target = cv2.resize(seg_target, (self.resolution[0], self.resolution[1]))
+            seg_target = seg_target.transpose((2, 0, 1))
+            # if obj_labels[2] == 1:
+            #     cv2.imwrite('mask.png', mask.transpose((1, 2, 0)))
+            #     cv2.imwrite('gray.png', img.transpose((1, 2, 0)))
             
         term = self._game.is_episode_finished() or self._game.is_player_dead()
         
@@ -168,9 +232,11 @@ class DoomSimulator:
             self.new_episode() # in multiplayer multi_simulator takes care of this            
             img = np.zeros((self.num_channels, self.resolution[1], self.resolution[0]), dtype=np.uint8) # should ideally put nan here, but since it's an int...
             meas = np.zeros(self.num_meas, dtype=np.uint32) # should ideally put nan here, but since it's an int...
-            mask = np.zeros((1, self.resolution[1], self.resolution[0]), dtype=np.uint8)
-            
-        return img, meas, rwrd, term, obj_labels, mask
+            seg_target = np.zeros((3+len(self.object_names), self.resolution[1], self.resolution[0]), dtype=np.uint8)
+            mask = np.zeros((3, self.resolution[1], self.resolution[0]), dtype=np.uint8)
+            gray_mask = np.zeros((1, self.resolution[1], self.resolution[0]), dtype=np.uint8)
+
+        return img, meas, rwrd, term, obj_labels, gray_mask, mask, seg_target
     
     def get_random_action(self):
         return [(random.random() >= .5) for i in range(self.num_buttons)]

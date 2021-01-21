@@ -98,7 +98,6 @@ class Agent:
         self.num_manual_controls = len(self.discrete_controls_manual)
         
         self.net_discrete_actions = []
-        
         if not self.opposite_button_pairs:
             # the set of actions is 2^{the set of buttons}
             for perm in it.product([False, True], repeat=len(self.discrete_controls_to_net)):

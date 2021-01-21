@@ -50,12 +50,15 @@ class MultiExperienceMemory:
         
     def reset(self):
         self._images = my_util.make_array(shape=(self.capacity,) + self.img_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
-        self._masks = my_util.make_array(shape=(self.capacity,) + self.img_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
+        self._gray_masks = my_util.make_array(shape=(self.capacity,) + self.img_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
+        self._masks = my_util.make_array(shape=(self.capacity,) + (3, self.img_shape[1], self.img_shape[2]), dtype=np.uint8, shared=self.shared, fill_val=0)
+        self._seg_targets = my_util.make_array(shape=(self.capacity,) + (3+self.obj_label_shape[0], self.img_shape[1], self.img_shape[2]), dtype=np.uint8, shared=self.shared, fill_val=0)
         self._measurements =  my_util.make_array(shape=(self.capacity,) + self.meas_shape, dtype=np.float32, shared=self.shared, fill_val=0.)
         self._rewards =  my_util.make_array(shape=(self.capacity,), dtype=np.float32, shared=self.shared, fill_val=0.)
         self._obj_labels = my_util.make_array(shape=(self.capacity,) + self.obj_label_shape, dtype=np.uint8, shared=self.shared, fill_val=0)
         self._terminals =  my_util.make_array(shape=(self.capacity,), dtype=np.bool, shared=self.shared, fill_val=1)
         self._actions = my_util.make_array(shape=(self.capacity,) + self.action_shape, dtype=np.int, shared=self.shared, fill_val=0)
+        self._action_indices = my_util.make_array(shape=(self.capacity,1), dtype=np.int, shared=self.shared, fill_val=0)
         self._objectives = my_util.make_array(shape=(self.capacity,) + self.obj_shape, dtype=np.float32, shared=self.shared, fill_val=0.)
         self._n_episode = my_util.make_array(shape=(self.capacity,), dtype=np.uint64, shared=self.shared, fill_val=0) # this is needed to compute future targets efficiently
         self._n_head = my_util.make_array(shape=(self.capacity,), dtype=np.uint64, shared=self.shared, fill_val=0) # this is needed to compute future targets efficiently
@@ -64,7 +67,7 @@ class MultiExperienceMemory:
         self._episode_counts = np.zeros(self.num_heads)
 
 
-    def add(self, imgs, meass, rwrds, terms, obj_labels, masks, acts, objs=None, preds=None):
+    def add(self, imgs, meass, rwrds, terms, obj_labels, gray_masks, masks, seg_targets, acts, act_indice, objs=None, preds=None):
         ''' Add experience to dataset.
 
         Args:
@@ -80,7 +83,10 @@ class MultiExperienceMemory:
         self._rewards[self._curr_indices] = rwrds
         self._terminals[self._curr_indices] = terms
         self._actions[self._curr_indices] = np.array(acts)
+        self._action_indices[self._curr_indices] = np.array(act_indice)
         self._masks[self._curr_indices] = masks
+        self._gray_masks[self._curr_indices] = gray_masks
+        self._seg_targets[self._curr_indices] = seg_targets
         self._obj_labels[self._curr_indices] = obj_labels
         if isinstance(objs, np.ndarray):
             self._objectives[self._curr_indices] = objs
@@ -112,10 +118,11 @@ class MultiExperienceMemory:
         self._curr_indices = (self._curr_indices + 1) % self.capacity            
         self._terminals[self._curr_indices] = True # make the following state terminal, so that our current episode doesn't get stitched with the next one when sampling states
             
-    def add_step(self, multi_simulator, acts = None, objs=None, preds=None):
+    def add_step(self, multi_simulator, acts = None, act_indice=None, objs=None, preds=None):
         if acts == None:
+            raise NotImplementedError
             acts = multi_simulator.get_random_actions()
-        self.add(*(multi_simulator.step(acts) +  (acts,objs,preds)))
+        self.add(*(multi_simulator.step(acts) +  (acts,act_indice, objs,preds)))
         
     def add_n_steps_with_actor(self, multi_simulator, num_steps, actor, verbose=False, write_predictions=False, write_logs = False, global_step=0):
         ns = 0
@@ -160,11 +167,12 @@ class MultiExperienceMemory:
             if actor.random_objective_coeffs:
                 actor.reset_objective_coeffs(np.where(invalid_states)[0].tolist())
             curr_act[invalid_states] = actor.random_actions(np.sum(invalid_states))
+            curr_act_indice = np.array([actor.agent.action_to_index[tuple(act)] for act in curr_act]).reshape(-1, 1)
             
             if write_predictions:
-                self.add_step(multi_simulator, curr_act.tolist(), actor.objectives_to_write(), actor.curr_predictions)
+                self.add_step(multi_simulator, curr_act.tolist(), curr_act_indice.tolist(), actor.objectives_to_write(), actor.curr_predictions)
             else:
-                self.add_step(multi_simulator, curr_act.tolist(), actor.objectives_to_write())
+                self.add_step(multi_simulator, curr_act.tolist(), curr_act_indice.tolist(), actor.objectives_to_write())
             if write_logs:
                 last_indices = np.array(self.get_last_indices())
                 last_rewards = self._rewards[last_indices]
@@ -207,6 +215,18 @@ class MultiExperienceMemory:
         state_imgs = np.transpose(np.reshape(np.take(self._images, frames, axis=0), (len(indices),) + self.state_imgs_shape), [0,2,3,1]).astype(np.float32)
         state_meas = np.reshape(np.take(self._measurements, frames, axis=0), (len(indices),) + self.state_meas_shape).astype(np.float32)
         return state_imgs, state_meas
+
+    def get_segmentation(self, indices):
+        frames = np.zeros(len(indices)*self.history_length, dtype=np.int64)
+        for (ni,index) in enumerate(indices):
+            frame_slice = np.arange(int(index) - self.history_length*self.history_step + 1, (int(index) + 1), self.history_step) % self.capacity
+            frames[ni*self.history_length:(ni+1)*self.history_length] = frame_slice
+        #
+        # gray_masks = np.transpose(np.reshape(np.take(self._gray_masks, frames, axis=0), (len(indices),) + self.state_imgs_shape), [0, 2, 3, 1]).astype(np.float32)
+        masks = np.transpose(np.reshape(np.take(self._masks, frames, axis=0), (len(indices),) + (3, self.state_imgs_shape[1], self.state_imgs_shape[2])), [0, 2, 3, 1]).astype(np.float32)
+        seg_targets = np.transpose(np.reshape(np.take(self._seg_targets, frames, axis=0), (len(indices),) + (3+self.obj_label_shape[0], self.state_imgs_shape[1], self.state_imgs_shape[2])), [0, 2, 3, 1]).astype(np.float32)
+
+        return seg_targets, masks
             
     def get_current_state(self):
         '''  Return most recent observation sequence '''
@@ -236,7 +256,8 @@ class MultiExperienceMemory:
         indices_arr = np.array(indices)
         state_imgs, state_meas = self.get_states((indices_arr - 1) % self.capacity)
         rwrds = self._rewards[indices_arr]
-        acts = self._actions[indices_arr]       
+        acts = self._actions[indices_arr]
+        act_indices = self._action_indices[indices_arr]
         terms = self._terminals[indices_arr].astype(int)
         targs = self.get_targets((indices_arr - 1) % self.capacity)
         if isinstance(self._objectives, np.ndarray):
@@ -244,27 +265,25 @@ class MultiExperienceMemory:
         else:
             objs = None     
         
-        return state_imgs, state_meas, rwrds, terms, acts, targs, objs
+        return state_imgs, state_meas, rwrds, terms, acts, targs, objs, act_indices
 
     def get_obj_labels(self, indices):
         indices_arr = np.array(indices)
         return self._obj_labels[indices_arr]
 
-    def get_masks(self, indices):
-        indices_arr = np.array(indices)
-        return self._masks[indices_arr].transpose((0, 2, 3, 1))
 
     def dump(self, coeffs, scale_coeffs, discount_factor=0.99):
-        state_imgs, state_meas, rwrds, terms, _, _, _ = self.get_observations(np.arange(self._curr_indices[-1]))
-        obj_labels = self.get_obj_labels(np.arange(self._curr_indices[-1]))
-        masks = self.get_masks(np.arange(self._curr_indices[-1]))
+        state_imgs, state_meas, rwrds, terms, acts, _, _, act_indices = self.get_observations(np.arange(self._curr_indices[-1]))
+        obj_labels = self.get_obj_labels((np.arange(self._curr_indices[-1])-1)%self.capacity)
+        seg_targets, masks = self.get_segmentation((np.arange(self._curr_indices[-1])-1)%self.capacity)
         keys = ['obs', 'meas', 'rwrds', 'terms']
 
         episode_obs = []
-        episode_masks = []
+        episode_seg_targets = []
         episode_meas = []
         episode_rwrds = []
         episode_obj_labels = []
+        episode_acts = []
         episode = 0
         coeffs = [0. if c <= 1e-5 and c >= -1e-5 else c for c in coeffs]
         dir_name = os.path.join('/data/jun/projects/reward_induced_mtl_rep/datasets/vizdoom/', self.dir_name, '-'.join(map(str, coeffs)))
@@ -276,9 +295,30 @@ class MultiExperienceMemory:
         i = 1
         while i < len(terms)-1:
             term = terms[i]
+            if term:
+                reversed_rewards = episode_rwrds[::-1]
+                values = np.array(list(accumulate(reversed_rewards, lambda x,y: x*discount_factor + y))[::-1])
+                import pdb
+                pdb.set_trace()
+                with open(os.path.join(dir_name, 'episode_{}.pkl'.format(episode)), 'wb') as f:
+                    pickle.dump({'obs': episode_obs, 'meas': episode_meas,
+                                 'rwrds': episode_rwrds, 'values': values, 'obj_labels': episode_obj_labels,
+                                 'acts': episode_acts,
+                                 'seg_targets': episode_seg_targets}, f)
+                episode += 1
+                episode_obs = []
+                episode_meas = []
+                episode_rwrds = []
+                episode_obj_labels = []
+                episode_seg_targets = []
+                episode_acts = []
+                i += 2
             episode_obj_labels.append(obj_labels[i])
             episode_obs.append(cv2.resize(state_imgs[i],(64, 64))[None,:,:])
-            episode_masks.append(cv2.resize(masks[i],(64, 64))[None,:,:])
+            episode_seg_targets.append(cv2.resize(seg_targets[i], (64, 64)).transpose((2, 0, 1)))
+            # cv2.imwrite('segmentation_{}.png'.format(i), masks[i])
+            # cv2.imwrite('observation_{}.png'.format(i),state_imgs[i])
+            episode_acts.append(act_indices[i])
             episode_meas.append(state_meas[i])
             normalized_meas = state_meas[i] / scale_coeffs
             next_normalized_meas = state_meas[i+1] / scale_coeffs
@@ -286,18 +326,6 @@ class MultiExperienceMemory:
             episode_rwrds.append(reward)
             prev_meas = normalized_meas
             i += 1
-            if term:
-                reversed_rewards = episode_rwrds[::-1]
-                values = np.array(list(accumulate(reversed_rewards, lambda x,y: x*discount_factor + y))[::-1])
-                with open(os.path.join(dir_name, 'episode_{}.pkl'.format(episode)), 'wb') as f:
-                    pickle.dump({'obs': episode_obs, 'meas': episode_meas,
-                                 'rwrds': episode_rwrds, 'values': values, 'obj_labels': episode_obj_labels, 'masks': episode_masks}, f)
-                episode += 1
-                episode_obs = []
-                episode_meas = []
-                episode_rwrds = []
-                episode_obj_labels = []
-                i += 1
 
     def get_random_batch(self, batch_size):
         ''' Sample minibatch of experiences for training '''

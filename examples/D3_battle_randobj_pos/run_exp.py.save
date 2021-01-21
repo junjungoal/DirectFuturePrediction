@@ -32,7 +32,7 @@ def main(main_args):
     ## Experience
     # Train experience
     train_experience_args = {}
-    train_experience_args['memory_capacity'] = 200000
+    train_experience_args['memory_capacity'] = 100000
     train_experience_args['history_length'] = 1
     train_experience_args['history_step'] = 1
     train_experience_args['action_format'] = 'enumerate'
@@ -111,8 +111,7 @@ def main(main_args):
     experiment_args['test_objective_coeffs_meas'] = np.array([0.5, 0.5, 1.0])
     experiment_args['test_random_prob'] = 0.
     experiment_args['test_checkpoint'] = 'checkpoints/2017_04_09_09_10_58'
-    experiment_args['test_policy_num_steps'] = 20000
-    # experiment_args['test_policy_num_steps'] = 1000
+    experiment_args['test_policy_num_steps'] = 12000
     experiment_args['show_predictions'] = False
     experiment_args['multiplayer'] = False
     experiment_args['scale_coeffs'] = [7.5, 30., 1.]

@@ -41,18 +41,22 @@ class MultiDoomSimulator:
         rwrds = []
         terms = []
         obj_labels =  []
+        gray_masks = []
         masks = []
+        seg_targets = []
         
         for (sim,act) in zip(self.simulators, actions):
-                img, meas, rwrd, term, obj_label, mask = sim.step(act)
+                img, meas, rwrd, term, obj_label, gray_mask, mask, seg_target = sim.step(act)
                 imgs.append(img)
                 meass.append(meas)
                 rwrds.append(rwrd)
                 terms.append(term)
                 obj_labels.append(obj_label)
+                gray_masks.append(gray_mask)
                 masks.append(mask)
+                seg_targets.append(seg_target)
                 
-        return imgs, meass, rwrds, terms, obj_labels, masks
+        return imgs, meass, rwrds, terms, obj_labels, gray_masks, masks, seg_targets
     
     def num_actions(self, nsim):
         return self.simulators[nsim].num_actions
